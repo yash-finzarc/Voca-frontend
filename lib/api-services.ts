@@ -15,6 +15,8 @@ export const twilioApi = {
     apiClient.post("/api/twilio/make-call", { phone_number: phoneNumber }),
   hangupAll: () => apiClient.post("/api/twilio/hangup-all"),
   getStatus: () => apiClient.get("/api/twilio/status"),
+  getCallStatus: () => apiClient.get("/api/twilio/call-status"),
+  getCallStatusSummary: (limit: number = 15) => apiClient.get(`/api/twilio/call-status/summary?limit=${limit}`),
 }
 
 export const ngrokApi = {
@@ -26,5 +28,11 @@ export const ngrokApi = {
 
 export const logsApi = {
   getLogs: (limit: number = 100) => apiClient.get(`/api/logs?limit=${limit}`),
+}
+
+// Health check to verify backend connection
+export const healthApi = {
+  check: () => apiClient.get("/health"),
+  checkRoot: () => apiClient.get("/"),
 }
 

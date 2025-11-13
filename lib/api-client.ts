@@ -17,10 +17,16 @@ export class ApiClient {
 
   constructor() {
     this.baseURL = API_BASE_URL || "http://localhost:8000"
+    console.log(`[API Client] Initialized with base URL: ${this.baseURL}`)
+    console.log(`[API Client] API Mode: ${API_MODE}`)
+    if (!API_BASE_URL) {
+      console.warn(`[API Client] ⚠️ No API_BASE_URL configured, using default: ${this.baseURL}`)
+    }
   }
 
   async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
     const url = `${this.baseURL}${endpoint}`
+    console.log(`[API Client] Making request to: ${url}`)
 
     const response = await fetch(url, {
       ...options,
@@ -55,20 +61,39 @@ export class ApiClient {
     // Need to restore text: for ok we haven't read.
 
     if (contentType.includes("application/json")) {
-      return response.json() as Promise<T>
+      const jsonData = await response.json()
+      console.log(`[API Client] ${endpoint} - Raw JSON response:`, jsonData)
+      console.log(`[API Client] ${endpoint} - Response type:`, typeof jsonData)
+      console.log(`[API Client] ${endpoint} - Response keys:`, typeof jsonData === "object" && jsonData !== null ? Object.keys(jsonData) : "N/A")
+      return jsonData as T
     }
 
     const text = await response.text()
+    console.log(`[API Client] ${endpoint} - Raw text response (first 500 chars):`, text.slice(0, 500))
+    
+    // Check if response is HTML (ngrok error, 404 page, etc.)
+    if (text.trim().toLowerCase().startsWith("<!doctype html") || text.includes("<html")) {
+      console.error(`[API Client] ${endpoint} - Received HTML response instead of JSON!`)
+      console.error(`[API Client] ${endpoint} - Full URL was: ${url}`)
+      console.error(`[API Client] ${endpoint} - This usually means: 1) Endpoint doesn't exist (404), 2) ngrok tunnel is down, or 3) Server error`)
+      throw new Error(`API returned HTML error page for ${endpoint} at ${url}. Check if endpoint exists and ngrok tunnel is active.`)
+    }
 
     try {
-      return JSON.parse(text) as T
+      const parsed = JSON.parse(text)
+      console.log(`[API Client] ${endpoint} - Parsed JSON:`, parsed)
+      return parsed as T
     } catch {
+      console.warn(`[API Client] ${endpoint} - Failed to parse as JSON, returning as text`)
       return text as unknown as T
     }
   }
 
   async get<T>(endpoint: string): Promise<T> {
-    return this.request<T>(endpoint, { method: "GET" })
+    return this.request<T>(endpoint, { 
+      method: "GET",
+      cache: "no-store", // Prevent caching
+    })
   }
 
   async post<T>(endpoint: string, data?: unknown): Promise<T> {
