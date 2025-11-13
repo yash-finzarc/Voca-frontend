@@ -1,3 +1,5 @@
+"use client"
+
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Legend, ResponsiveContainer } from "recharts"
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
@@ -17,11 +19,6 @@ const durationData = [
   { time: "15:00", calls: 18, totalMinutes: 450 },
   { time: "16:00", calls: 14, totalMinutes: 340 },
 ]
-
-export const metadata = {
-  title: "Dashboard - Voca AI Voice Assistant",
-  description: "Overview of AI voice calls and analytics",
-}
 
 export default function DashboardPage() {
   return (
