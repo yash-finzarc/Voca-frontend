@@ -1,5 +1,6 @@
 "use client"
 
+import ApiTest from "@/components/ApiTest"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Legend, ResponsiveContainer } from "recharts"
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
@@ -117,6 +118,10 @@ export default function DashboardPage() {
             </ChartContainer>
           </CardContent>
         </Card>
+      </div>
+
+      <div>
+        <ApiTest />
       </div>
     </div>
   )
