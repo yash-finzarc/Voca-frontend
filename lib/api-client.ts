@@ -32,6 +32,8 @@ export class ApiClient {
       ...options,
       headers: {
         "Content-Type": "application/json",
+        // Bypass ngrok browser warning for automated requests
+        "ngrok-skip-browser-warning": "true",
         ...options.headers,
       },
     })
