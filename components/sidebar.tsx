@@ -2,12 +2,13 @@
 
 import { usePathname } from "next/navigation"
 import Link from "next/link"
-import { LayoutDashboard, Mic, Phone } from "lucide-react"
+import { LayoutDashboard, Mic, Phone, MessageSquare } from "lucide-react"
 
 const navItems = [
   { label: "Dashboard", icon: LayoutDashboard, href: "/" },
   { label: "Local Voice", icon: Mic, href: "/local-voice" },
   { label: "Twilio Calls", icon: Phone, href: "/twilio-calls" },
+  { label: "System Prompt", icon: MessageSquare, href: "/system-prompt" },
 ]
 
 export default function Sidebar() {

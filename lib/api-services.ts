@@ -36,3 +36,10 @@ export const healthApi = {
   checkRoot: () => apiClient.get("/"),
 }
 
+// System Prompt APIs
+export const systemPromptApi = {
+  get: () => apiClient.get("/api/system-prompt"),
+  update: (prompt: string) => apiClient.post("/api/system-prompt", { prompt }),
+  reset: () => apiClient.post("/api/system-prompt/reset"),
+}
+
