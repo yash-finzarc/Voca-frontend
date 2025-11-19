@@ -3,6 +3,7 @@ import type { Metadata } from "next"
 import { Geist, Geist_Mono } from "next/font/google"
 import "./globals.css"
 import LayoutWrapper from "@/components/layout-wrapper"
+import { OrganizationProvider } from "@/lib/organization-context"
 
 const _geist = Geist({ subsets: ["latin"] })
 const _geistMono = Geist_Mono({ subsets: ["latin"] })
@@ -35,10 +36,14 @@ export default function RootLayout({
 }: {
   children: React.ReactNode
 }) {
+  const defaultOrganizationId = process.env.NEXT_PUBLIC_DEFAULT_ORGANIZATION_ID ?? ""
+
   return (
     <html lang="en">
       <body className={`${_geist.variable} ${_geistMono.variable} font-sans antialiased`}>
-        <LayoutWrapper showFooter={true}>{children}</LayoutWrapper>
+        <OrganizationProvider initialOrganizationId={defaultOrganizationId}>
+          <LayoutWrapper showFooter={true}>{children}</LayoutWrapper>
+        </OrganizationProvider>
       </body>
     </html>
   )

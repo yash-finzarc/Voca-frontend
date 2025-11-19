@@ -1,7 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
-import { systemPromptService, type SystemPrompt } from "@/lib/supabase-services"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
@@ -24,14 +23,96 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { Loader2, Save, RotateCcw, CheckCircle2, AlertCircle, Plus } from "lucide-react"
+import { systemPromptApi } from "@/lib/api-services"
+import { useOrganization } from "@/lib/organization-context"
+
+type PromptRecord = {
+  id: string
+  name: string
+  prompt: string
+  welcomeMessage?: string
+  isActive: boolean
+  createdAt?: string
+  updatedAt?: string
+}
+
+const normalizePromptResponse = (item: unknown): PromptRecord | null => {
+  if (!item || typeof item !== "object") {
+    console.log("[normalizePromptResponse] Invalid item:", item)
+    return null
+  }
+  const record = item as Record<string, unknown>
+  console.log("[normalizePromptResponse] Processing record:", record, "Keys:", Object.keys(record))
+  
+  const id = String(record.id ?? record.key ?? "")
+  if (!id) {
+    console.log("[normalizePromptResponse] No ID found in record")
+    return null
+  }
+
+  // Use name if available, otherwise fall back to key, then a default
+  const name = String(record.name ?? record.key ?? "Untitled Prompt")
+  console.log("[normalizePromptResponse] Extracted name:", name, "from record.name:", record.name, "record.key:", record.key)
+
+  const normalized = {
+    id,
+    name,
+    prompt: String(record.prompt ?? ""),
+    welcomeMessage: record.welcome_message ? String(record.welcome_message) : undefined,
+    isActive: Boolean(record.is_active ?? record.isDefault ?? record.is_active_prompt ?? record.is_default),
+    createdAt: record.created_at ? String(record.created_at) : undefined,
+    updatedAt: record.updated_at ? String(record.updated_at) : undefined,
+  }
+  
+  console.log("[normalizePromptResponse] Normalized result:", normalized)
+  return normalized
+}
+
+const extractPromptList = (payload: unknown): PromptRecord[] => {
+  if (!payload) return []
+
+  if (Array.isArray(payload)) {
+    return payload.map(normalizePromptResponse).filter((item): item is PromptRecord => Boolean(item))
+  }
+
+  if (typeof payload === "object") {
+    const record = payload as Record<string, unknown>
+    
+    // Check if it's a single prompt object (has id or key)
+    if (record.id || record.key) {
+      const single = normalizePromptResponse(record)
+      return single ? [single] : []
+    }
+    
+    // Check for nested prompts array
+    if (Array.isArray(record.prompts)) {
+      return record.prompts
+        .map(normalizePromptResponse)
+        .filter((item): item is PromptRecord => Boolean(item))
+    }
+    
+    // Check for data field (common API pattern)
+    if (Array.isArray(record.data)) {
+      return record.data
+        .map(normalizePromptResponse)
+        .filter((item): item is PromptRecord => Boolean(item))
+    }
+  }
+
+  return []
+}
 
 export default function SystemPromptPage() {
+  const { organizationId } = useOrganization()
   const [prompt, setPrompt] = useState("")
   const [originalPrompt, setOriginalPrompt] = useState("")
-  const [selectedKey, setSelectedKey] = useState<string>("default")
-  const [prompts, setPrompts] = useState<SystemPrompt[]>([])
+  const [welcomeMessage, setWelcomeMessage] = useState("")
+  const [originalWelcomeMessage, setOriginalWelcomeMessage] = useState("")
+  const [selectedPromptId, setSelectedPromptId] = useState<string>("")
+  const [prompts, setPrompts] = useState<PromptRecord[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
+  const [isSavingWelcomeMessage, setIsSavingWelcomeMessage] = useState(false)
   const [isResetting, setIsResetting] = useState(false)
   const [isCreating, setIsCreating] = useState(false)
   const [isLoadingPrompts, setIsLoadingPrompts] = useState(false)
@@ -40,60 +121,115 @@ export default function SystemPromptPage() {
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false)
   const [newPromptName, setNewPromptName] = useState("")
   const [newPromptText, setNewPromptText] = useState("")
+  const [newWelcomeMessage, setNewWelcomeMessage] = useState("")
 
-  const loadPrompts = useCallback(async (preserveSelection: boolean = true) => {
-    setIsLoadingPrompts(true)
-    try {
-      const allPrompts = await systemPromptService.getAll()
-      setPrompts(allPrompts)
-      
-      // If no prompt is selected or selected prompt doesn't exist, select default
-      if (preserveSelection) {
-        setSelectedKey((currentKey) => {
-          if (!currentKey || !allPrompts.find(p => p.key === currentKey)) {
-            const defaultPrompt = allPrompts.find(p => p.key === 'default') || allPrompts[0]
-            return defaultPrompt?.key || 'default'
+  const selectedPrompt = useMemo(
+    () => prompts.find((record) => record.id === selectedPromptId),
+    [prompts, selectedPromptId],
+  )
+
+  const loadPrompts = useCallback(
+    async (preserveSelection: boolean = true) => {
+      setIsLoading(true)
+      setIsLoadingPrompts(true)
+      try {
+        let response: unknown
+        let promptList: PromptRecord[] = []
+
+        // Try to get list of prompts first
+        try {
+          response = await systemPromptApi.list(organizationId || undefined)
+          console.log("[loadPrompts] List response:", response)
+          promptList = extractPromptList(response)
+          console.log("[loadPrompts] Extracted prompt list:", promptList)
+        } catch (listError) {
+          // If list endpoint doesn't exist (405), try getting active prompt instead
+          console.log("[loadPrompts] List endpoint not available, trying getActive:", listError)
+          try {
+            response = await systemPromptApi.getActive(organizationId || undefined)
+            console.log("[loadPrompts] getActive response:", response)
+            // extractPromptList now handles single objects too
+            promptList = extractPromptList(response)
+            console.log("[loadPrompts] Extracted prompt list from getActive:", promptList)
+          } catch (activeError) {
+            // If both fail, just continue with empty list
+            console.warn("[loadPrompts] Could not load prompts:", activeError)
+            promptList = []
+            // Don't set error state - allow user to create new prompts
           }
-          return currentKey
-        })
-      }
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : String(err)
-      console.error("Failed to load prompts:", err)
-      // Don't set error state here, just log it
-    } finally {
-      setIsLoadingPrompts(false)
-    }
-  }, [])
+        }
 
-  const loadPrompt = useCallback(async (key: string) => {
-    setIsLoading(true)
-    setError(null)
-    try {
-      const promptText = await systemPromptService.get(key)
-      setPrompt(promptText)
-      setOriginalPrompt(promptText)
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : String(err)
-      setError(`Failed to load system prompt: ${errorMessage}`)
-      console.error("Failed to load system prompt:", err)
-    } finally {
-      setIsLoading(false)
-    }
-  }, [])
+        setPrompts(promptList)
+
+        if (!promptList.length) {
+          setSelectedPromptId("")
+          setPrompt("")
+          setOriginalPrompt("")
+          setWelcomeMessage("")
+          setOriginalWelcomeMessage("")
+          setIsLoading(false)
+          setIsLoadingPrompts(false)
+          return
+        }
+
+        if (preserveSelection && selectedPromptId) {
+          const stillExists = promptList.some((promptRecord) => promptRecord.id === selectedPromptId)
+          if (stillExists) {
+            return
+          }
+        }
+
+        const nextPrompt =
+          promptList.find((promptRecord) => promptRecord.isActive) ?? promptList[0]
+        setSelectedPromptId(nextPrompt.id)
+        setPrompt(nextPrompt.prompt)
+        setOriginalPrompt(nextPrompt.prompt)
+        setWelcomeMessage(nextPrompt.welcomeMessage ?? "")
+        setOriginalWelcomeMessage(nextPrompt.welcomeMessage ?? "")
+      } catch (err) {
+        // Only set error for unexpected errors (not 405 from missing /list endpoint)
+        const errorMessage = err instanceof Error ? err.message : String(err)
+        // Check if it's a 405 error (method not allowed) - this is expected if /list doesn't exist
+        if (errorMessage.includes("405") || errorMessage.includes("Method Not Allowed")) {
+          console.log("[loadPrompts] List endpoint not available (expected if backend doesn't support it)")
+          // Don't set error - we already tried getActive as fallback
+        } else {
+          console.error("Failed to load prompts:", err)
+          setError(`Failed to load system prompts: ${errorMessage}`)
+        }
+      } finally {
+        setIsLoading(false)
+        setIsLoadingPrompts(false)
+      }
+    },
+    [organizationId, selectedPromptId],
+  )
 
   useEffect(() => {
-    loadPrompts()
+    void loadPrompts(false)
   }, [loadPrompts])
 
   useEffect(() => {
-    if (selectedKey) {
-      loadPrompt(selectedKey)
+    if (!selectedPromptId) {
+      return
     }
-  }, [selectedKey, loadPrompt])
+    const current = prompts.find((record) => record.id === selectedPromptId)
+    if (current) {
+      setPrompt(current.prompt)
+      setOriginalPrompt(current.prompt)
+      setWelcomeMessage(current.welcomeMessage ?? "")
+      setOriginalWelcomeMessage(current.welcomeMessage ?? "")
+    }
+  }, [prompts, selectedPromptId])
 
   const handleSave = useCallback(async () => {
-    if (prompt === originalPrompt) {
+    if (!selectedPromptId) {
+      setMessage({ type: "error", text: "Select a prompt before saving" })
+      setTimeout(() => setMessage(null), 3000)
+      return
+    }
+
+    if (prompt === originalPrompt && welcomeMessage === originalWelcomeMessage) {
       setMessage({ type: "error", text: "No changes to save" })
       setTimeout(() => setMessage(null), 3000)
       return
@@ -104,12 +240,16 @@ export default function SystemPromptPage() {
     setMessage(null)
 
     try {
-      const currentPrompt = prompts.find(p => p.key === selectedKey)
-      const isDefault = currentPrompt?.is_default || selectedKey === 'default'
-      await systemPromptService.updateByKey(selectedKey, prompt, isDefault)
+      // organizationId is optional - backend will update default prompt if not provided
+      await systemPromptApi.update(
+        selectedPromptId,
+        { prompt, welcome_message: welcomeMessage },
+        organizationId || undefined,
+      )
       setOriginalPrompt(prompt)
-      await loadPrompts() // Refresh the prompts list
-      setMessage({ type: "success", text: "System prompt updated successfully!" })
+      setOriginalWelcomeMessage(welcomeMessage)
+      await loadPrompts(true)
+      setMessage({ type: "success", text: "System prompt and welcome message updated successfully!" })
       setTimeout(() => setMessage(null), 5000)
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err)
@@ -119,7 +259,44 @@ export default function SystemPromptPage() {
     } finally {
       setIsSaving(false)
     }
-  }, [prompt, originalPrompt, selectedKey, prompts, loadPrompts])
+  }, [organizationId, selectedPromptId, prompt, originalPrompt, welcomeMessage, originalWelcomeMessage, loadPrompts])
+
+  const handleSaveWelcomeMessage = useCallback(async () => {
+    if (!selectedPromptId) {
+      setMessage({ type: "error", text: "Select a prompt before saving" })
+      setTimeout(() => setMessage(null), 3000)
+      return
+    }
+
+    if (welcomeMessage === originalWelcomeMessage) {
+      setMessage({ type: "error", text: "No changes to save" })
+      setTimeout(() => setMessage(null), 3000)
+      return
+    }
+
+    setIsSavingWelcomeMessage(true)
+    setError(null)
+    setMessage(null)
+
+    try {
+      // Use the dedicated welcome message endpoint
+      await systemPromptApi.updateWelcomeMessage(
+        welcomeMessage,
+        organizationId || undefined,
+      )
+      setOriginalWelcomeMessage(welcomeMessage)
+      await loadPrompts(true)
+      setMessage({ type: "success", text: "Welcome message updated successfully!" })
+      setTimeout(() => setMessage(null), 5000)
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err)
+      setError(`Failed to save welcome message: ${errorMessage}`)
+      setMessage({ type: "error", text: errorMessage })
+      setTimeout(() => setMessage(null), 5000)
+    } finally {
+      setIsSavingWelcomeMessage(false)
+    }
+  }, [organizationId, selectedPromptId, welcomeMessage, originalWelcomeMessage, loadPrompts])
 
   const handleCreatePrompt = useCallback(async () => {
     if (!newPromptName.trim()) {
@@ -139,35 +316,82 @@ export default function SystemPromptPage() {
     setMessage(null)
 
     try {
-      const created = await systemPromptService.create(newPromptName, newPromptText, false)
-      await loadPrompts() // Refresh the prompts list
-      setSelectedKey(created.key) // Switch to the newly created prompt
+      console.log("[Create Prompt] Calling API with:", {
+        organizationId: organizationId || "(not provided - will save as default)",
+        name: newPromptName.trim(),
+        prompt: newPromptText,
+        is_active: true,
+      })
+
+      // organizationId is optional - backend will save as default if not provided
+      const created = await systemPromptApi.create(
+        {
+          name: newPromptName.trim(),
+          prompt: newPromptText,
+          welcome_message: newWelcomeMessage.trim(),
+          is_active: true,
+        },
+        organizationId || undefined,
+      )
+
+      console.log("[Create Prompt] API Response:", created)
+
+      if (!created) {
+        throw new Error("No response from server")
+      }
+
       setIsCreateDialogOpen(false)
       setNewPromptName("")
       setNewPromptText("")
+      setNewWelcomeMessage("")
+      await loadPrompts(false)
+      
+      // Extract ID from response (handle different response formats)
+      const createdRecord = created as Record<string, unknown>
+      const createdId = createdRecord?.id ?? createdRecord?.prompt_id
+      if (createdId) {
+        setSelectedPromptId(String(createdId))
+        const createdPrompt = String(createdRecord?.prompt ?? newPromptText)
+        setPrompt(createdPrompt)
+        setOriginalPrompt(createdPrompt)
+        const createdWelcomeMessage = String(createdRecord?.welcome_message ?? newWelcomeMessage)
+        setWelcomeMessage(createdWelcomeMessage)
+        setOriginalWelcomeMessage(createdWelcomeMessage)
+      }
+      
       setMessage({ type: "success", text: `Prompt "${newPromptName}" created successfully!` })
       setTimeout(() => setMessage(null), 5000)
     } catch (err) {
+      console.error("[Create Prompt] Error:", err)
       const errorMessage = err instanceof Error ? err.message : String(err)
       setError(`Failed to create prompt: ${errorMessage}`)
-      setMessage({ type: "error", text: errorMessage })
+      setMessage({ type: "error", text: `Failed to create prompt: ${errorMessage}` })
       setTimeout(() => setMessage(null), 5000)
     } finally {
       setIsCreating(false)
     }
-  }, [newPromptName, newPromptText, loadPrompts])
+  }, [organizationId, newPromptName, newPromptText, newWelcomeMessage, loadPrompts])
 
-  const handlePromptChange = useCallback((key: string) => {
-    if (key === "__create_new__") {
-      setIsCreateDialogOpen(true)
-      // Don't update selectedKey, keep the current selection
-      return
-    }
-    // Only change if it's different to avoid unnecessary reloads
-    if (key !== selectedKey) {
-      setSelectedKey(key)
-    }
-  }, [selectedKey])
+  const handlePromptChange = useCallback(
+    (value: string) => {
+      if (value === "__create_new__") {
+        setIsCreateDialogOpen(true)
+        return
+      }
+
+      if (value !== selectedPromptId) {
+        setSelectedPromptId(value)
+        const nextPrompt = prompts.find((record) => record.id === value)
+        if (nextPrompt) {
+          setPrompt(nextPrompt.prompt)
+          setOriginalPrompt(nextPrompt.prompt)
+          setWelcomeMessage(nextPrompt.welcomeMessage ?? "")
+          setOriginalWelcomeMessage(nextPrompt.welcomeMessage ?? "")
+        }
+      }
+    },
+    [selectedPromptId, prompts],
+  )
 
   const handleReset = useCallback(async () => {
     if (!confirm("Are you sure you want to reset the system prompt to default? This cannot be undone.")) {
@@ -179,10 +403,9 @@ export default function SystemPromptPage() {
     setMessage(null)
 
     try {
-      await systemPromptService.reset()
-      setSelectedKey('default')
-      await loadPrompt('default') // Reload to get the default prompt
-      await loadPrompts() // Refresh the prompts list
+      // organizationId is optional - backend will reset default prompt if not provided
+      await systemPromptApi.reset(organizationId || undefined)
+      await loadPrompts(false)
       setMessage({ type: "success", text: "System prompt reset to default" })
       setTimeout(() => setMessage(null), 5000)
     } catch (err) {
@@ -193,11 +416,46 @@ export default function SystemPromptPage() {
     } finally {
       setIsResetting(false)
     }
-  }, [loadPrompt, loadPrompts])
+  }, [organizationId, loadPrompts])
 
-  const hasChanges = prompt !== originalPrompt
+  const hasChanges = prompt !== originalPrompt || welcomeMessage !== originalWelcomeMessage
+  const hasWelcomeMessageChanges = welcomeMessage !== originalWelcomeMessage
+  const hasPromptChanges = prompt !== originalPrompt
   const wordCount = prompt.trim().split(/\s+/).filter(Boolean).length
   const charCount = prompt.length
+  const welcomeMessageCharCount = welcomeMessage.length
+
+  const renderPromptOptions = () => {
+    console.log("[renderPromptOptions] Current prompts state:", prompts)
+    if (!prompts.length) {
+      return <div className="px-3 py-2 text-sm text-muted-foreground">No prompts available</div>
+    }
+
+    return (
+      <>
+        {prompts.map((promptRecord) => {
+          const displayName = promptRecord.name || promptRecord.id || "Untitled Prompt"
+          console.log("[renderPromptOptions] Rendering prompt:", promptRecord.id, "with name:", displayName, "full record:", promptRecord)
+          return (
+            <SelectItem key={promptRecord.id} value={promptRecord.id}>
+              <div className="flex flex-col text-left">
+                <span className="font-medium">{displayName}</span>
+                {promptRecord.isActive && (
+                  <span className="text-xs text-green-600">Active</span>
+                )}
+              </div>
+            </SelectItem>
+          )
+        })}
+        <SelectItem value="__create_new__" className="text-blue-600 font-medium">
+          <div className="flex items-center gap-2">
+            <Plus className="w-4 h-4" />
+            <span>Create New Prompt</span>
+          </div>
+        </SelectItem>
+      </>
+    )
+  }
 
   return (
     <div className="min-h-screen bg-gray-50 p-8">
@@ -206,6 +464,21 @@ export default function SystemPromptPage() {
           <h1 className="text-3xl font-bold text-gray-900">System Prompt</h1>
           <p className="mt-1 text-gray-600">Configure the AI system prompt used for voice interactions</p>
         </div>
+
+        {organizationId && process.env.NODE_ENV === "development" && (
+          <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-blue-900 text-xs">
+            <strong>Debug Info:</strong> Organization ID: <code className="bg-blue-100 px-1 rounded">{organizationId}</code>
+            {" | "}
+            Check browser console for API request/response logs
+          </div>
+        )}
+
+        {!organizationId && process.env.NODE_ENV === "development" && (
+          <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-blue-900 text-xs">
+            <strong>Info:</strong> No organization ID set - prompts will be saved as default prompts. 
+            To use multi-tenant features, set <code className="bg-blue-100 px-1 rounded">NEXT_PUBLIC_DEFAULT_ORGANIZATION_ID</code> in your environment variables.
+          </div>
+        )}
 
         {message && (
           <div
@@ -235,13 +508,13 @@ export default function SystemPromptPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle>Edit System Prompt</CardTitle>
+            <CardTitle>Edit System Prompt & Welcome Message</CardTitle>
             <CardDescription>
-              This prompt defines the AI assistant's behavior, personality, and instructions for voice interactions.
+              Configure the welcome message and system prompt that define the AI assistant's behavior, personality, and instructions for voice interactions.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            {isLoading ? (
+            {isLoading && !selectedPrompt ? (
               <div className="flex items-center justify-center py-12">
                 <Loader2 className="w-6 h-6 animate-spin text-blue-600" />
                 <span className="ml-2 text-gray-600">Loading system prompt...</span>
@@ -254,33 +527,16 @@ export default function SystemPromptPage() {
                       Select Prompt
                     </label>
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex gap-2 flex-col sm:flex-row">
                     <Select
-                      value={selectedKey}
+                      value={selectedPromptId}
                       onValueChange={handlePromptChange}
-                      disabled={isLoadingPrompts}
+                      disabled={isLoadingPrompts || !organizationId}
                     >
                       <SelectTrigger id="prompt-select" className="flex-1">
                         <SelectValue placeholder="Select a prompt..." />
                       </SelectTrigger>
-                      <SelectContent>
-                        {prompts.map((p) => (
-                          <SelectItem key={p.id} value={p.key}>
-                            <div className="flex items-center gap-2">
-                              <span>{p.key}</span>
-                              {p.is_default && (
-                                <span className="text-xs text-gray-500">(Default)</span>
-                              )}
-                            </div>
-                          </SelectItem>
-                        ))}
-                        <SelectItem value="__create_new__" className="text-blue-600 font-medium">
-                          <div className="flex items-center gap-2">
-                            <Plus className="w-4 h-4" />
-                            <span>Create New Prompt</span>
-                          </div>
-                        </SelectItem>
-                      </SelectContent>
+                      <SelectContent>{renderPromptOptions()}</SelectContent>
                     </Select>
                     <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
                       <DialogTrigger asChild>
@@ -293,7 +549,7 @@ export default function SystemPromptPage() {
                         <DialogHeader>
                           <DialogTitle>Create New System Prompt</DialogTitle>
                           <DialogDescription>
-                            Create a new system prompt with a custom name. The name will be converted to a URL-friendly key.
+                            Create a new system prompt with a custom name. The prompt will be scoped to the selected organization.
                           </DialogDescription>
                         </DialogHeader>
                         <div className="space-y-4 py-4">
@@ -305,8 +561,19 @@ export default function SystemPromptPage() {
                               onChange={(e) => setNewPromptName(e.target.value)}
                               placeholder="e.g., Customer Support, Technical Assistant"
                             />
+                            <p className="text-xs text-gray-500">Enter a descriptive name for this prompt</p>
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor="new-welcome-message">Welcome Message</Label>
+                            <Textarea
+                              id="new-welcome-message"
+                              value={newWelcomeMessage}
+                              onChange={(e) => setNewWelcomeMessage(e.target.value)}
+                              placeholder="Enter the welcome message that will be played when a call starts..."
+                              className="min-h-[120px] text-sm"
+                            />
                             <p className="text-xs text-gray-500">
-                              Enter a descriptive name for this prompt
+                              This message will be played to users when they first connect to the AI assistant
                             </p>
                           </div>
                           <div className="space-y-2">
@@ -330,6 +597,7 @@ export default function SystemPromptPage() {
                               setIsCreateDialogOpen(false)
                               setNewPromptName("")
                               setNewPromptText("")
+                              setNewWelcomeMessage("")
                             }}
                             disabled={isCreating}
                           >
@@ -360,9 +628,52 @@ export default function SystemPromptPage() {
 
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
-                    <label htmlFor="system-prompt" className="text-sm font-medium text-gray-700">
-                      System Prompt
+                    <label htmlFor="welcome-message" className="text-sm font-medium text-gray-700">
+                      Welcome Message
                     </label>
+                    <div className="text-xs text-gray-500">
+                      {welcomeMessageCharCount} characters
+                    </div>
+                  </div>
+                  <Textarea
+                    id="welcome-message"
+                    value={welcomeMessage}
+                    onChange={(e) => setWelcomeMessage(e.target.value)}
+                    placeholder="Enter the welcome message that will be played when a call starts..."
+                    className="min-h-[120px] text-sm"
+                    disabled={!selectedPromptId}
+                  />
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs text-gray-500">
+                      This message will be played to users when they first connect to the AI assistant. It will be stored in the welcome_message column in Supabase.
+                    </p>
+                    <Button
+                      onClick={handleSaveWelcomeMessage}
+                      disabled={isSavingWelcomeMessage || welcomeMessage === originalWelcomeMessage || !selectedPromptId}
+                      size="sm"
+                      className="flex items-center gap-2 bg-green-600 hover:bg-green-700"
+                    >
+                      {isSavingWelcomeMessage ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          Saving...
+                        </>
+                      ) : (
+                        <>
+                          <Save className="w-4 h-4" />
+                          Save Welcome Message
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="border-t pt-4 mt-4">
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <label htmlFor="system-prompt" className="text-sm font-medium text-gray-700">
+                        System Prompt
+                      </label>
                     <div className="text-xs text-gray-500">
                       {wordCount} words • {charCount} characters
                     </div>
@@ -373,22 +684,24 @@ export default function SystemPromptPage() {
                     onChange={(e) => setPrompt(e.target.value)}
                     placeholder="Enter the system prompt for the AI assistant..."
                     className="min-h-[400px] font-mono text-sm"
+                    disabled={!selectedPromptId}
                   />
                   <p className="text-xs text-gray-500">
                     The system prompt will be used to guide the AI's responses during voice conversations.
                   </p>
+                  </div>
                 </div>
 
                 <div className="flex items-center justify-between pt-4 border-t">
                   <div className="flex items-center gap-2">
-                    {hasChanges && (
-                      <span className="text-xs text-amber-600 font-medium">You have unsaved changes</span>
+                    {hasPromptChanges && (
+                      <span className="text-xs text-amber-600 font-medium">System prompt has unsaved changes</span>
                     )}
                   </div>
                   <div className="flex gap-3">
                     <Button
                       onClick={handleReset}
-                      disabled={isSaving || isResetting || isLoading}
+                      disabled={isSaving || isSavingWelcomeMessage || isResetting || !organizationId}
                       variant="outline"
                       className="flex items-center gap-2"
                     >
@@ -406,7 +719,7 @@ export default function SystemPromptPage() {
                     </Button>
                     <Button
                       onClick={handleSave}
-                      disabled={isSaving || isResetting || isLoading || !hasChanges}
+                      disabled={isSaving || isSavingWelcomeMessage || isResetting || !hasPromptChanges || !selectedPromptId}
                       className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700"
                     >
                       {isSaving ? (
@@ -417,7 +730,7 @@ export default function SystemPromptPage() {
                       ) : (
                         <>
                           <Save className="w-4 h-4" />
-                          Save Changes
+                          Save System Prompt
                         </>
                       )}
                     </Button>

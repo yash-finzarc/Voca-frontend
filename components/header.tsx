@@ -1,13 +1,21 @@
 "use client"
 
 import { Badge } from "@/components/ui/badge"
+import { useOrganization } from "@/lib/organization-context"
 import { User } from "lucide-react"
 
 export default function Header() {
+  const { organizationId } = useOrganization()
+
   return (
     <header className="h-16 bg-white border-b border-gray-200 flex items-center justify-between px-6">
       <div className="flex items-center gap-3">
         <h2 className="text-lg font-semibold text-gray-900">Voca - AI Voice Assistant with Twilio</h2>
+        {organizationId && (
+          <Badge variant="secondary" className="text-xs">
+            Org: {organizationId}
+          </Badge>
+        )}
       </div>
       <div className="flex items-center gap-4">
         <Badge className="bg-green-100 text-green-800">Ready</Badge>
