@@ -1,15 +1,13 @@
-const API_MODE = process.env.NEXT_PUBLIC_API_MODE || "local"
+// Backend API configuration
+// Set NEXT_PUBLIC_API_BASE_URL to your Linode server URL (e.g., http://172.105.50.83:8000 or https://your-domain.com)
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000"
 
-const API_BASE_URL =
-  API_MODE === "ngrok"
-    ? process.env.NEXT_PUBLIC_API_BASE_URL_NGROK
-    : process.env.NEXT_PUBLIC_API_BASE_URL_LOCAL
+// WebSocket URL - typically same base as API but with ws:// or wss:// protocol
+// If not explicitly set, convert HTTP/HTTPS to WS/WSS automatically
+const WS_URL = process.env.NEXT_PUBLIC_WS_URL || (API_BASE_URL ? API_BASE_URL.replace(/^https?:/, (match) => (match === "https:" ? "wss:" : "ws:")) : "ws://localhost:8000")
 
-const WS_URL =
-  API_MODE === "ngrok" ? process.env.NEXT_PUBLIC_WS_URL_NGROK : process.env.NEXT_PUBLIC_WS_URL_LOCAL
-
-if (!API_BASE_URL || !WS_URL) {
-  console.error("❌ API configuration missing. Check .env file")
+if (!API_BASE_URL) {
+  console.error("❌ API configuration missing. Set NEXT_PUBLIC_API_BASE_URL in .env.local")
 }
 
 export class ApiClient {
@@ -18,25 +16,62 @@ export class ApiClient {
   constructor() {
     this.baseURL = API_BASE_URL || "http://localhost:8000"
     console.log(`[API Client] Initialized with base URL: ${this.baseURL}`)
-    console.log(`[API Client] API Mode: ${API_MODE}`)
-    if (!API_BASE_URL) {
-      console.warn(`[API Client] ⚠️ No API_BASE_URL configured, using default: ${this.baseURL}`)
+    if (!process.env.NEXT_PUBLIC_API_BASE_URL) {
+      console.warn(`[API Client] ⚠️ No NEXT_PUBLIC_API_BASE_URL configured, using default: ${this.baseURL}`)
     }
   }
 
   async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
     const url = `${this.baseURL}${endpoint}`
     console.log(`[API Client] Making request to: ${url}`)
+    console.log(`[API Client] Base URL: ${this.baseURL}`)
+    console.log(`[API Client] Environment variable: ${process.env.NEXT_PUBLIC_API_BASE_URL || "NOT SET"}`)
 
-    const response = await fetch(url, {
-      ...options,
-      headers: {
-        "Content-Type": "application/json",
-        // Bypass ngrok browser warning for automated requests
-        "ngrok-skip-browser-warning": "true",
-        ...options.headers,
-      },
-    })
+    let response: Response
+    try {
+      response = await fetch(url, {
+        ...options,
+        headers: {
+          "Content-Type": "application/json",
+          ...options.headers,
+        },
+      })
+    } catch (error) {
+      // Network error - fetch failed before getting a response
+      const errorMessage = error instanceof Error ? error.message : String(error)
+      console.error(`[API Client] Network error when fetching ${url}:`, errorMessage)
+      console.error(`[API Client] Full error:`, error)
+      
+      // Provide detailed diagnostic information
+      const diagnostics = [
+        `❌ Network Error: Failed to fetch from ${url}`,
+        `📋 Diagnostics:`,
+        `   1. Check if backend is running on: ${this.baseURL}`,
+        `   2. Check if ${this.baseURL} is accessible from your browser`,
+        `   3. Verify CORS is configured on backend to allow: ${typeof window !== 'undefined' ? window.location.origin : 'your frontend URL'}`,
+        `   4. Check Linode firewall settings - port must be open`,
+        `   5. If using HTTP (not HTTPS), verify the backend URL is correct`,
+        `   6. Environment variable NEXT_PUBLIC_API_BASE_URL: ${process.env.NEXT_PUBLIC_API_BASE_URL || "NOT CONFIGURED"}`,
+        ``,
+        `💡 Try:`,
+        `   - Open ${this.baseURL}/health in your browser to test connectivity`,
+        `   - Check backend logs on Linode server`,
+        `   - Verify firewall allows connections on the backend port`,
+      ]
+      
+      console.error(diagnostics.join('\n'))
+      
+      throw new Error(
+        `Network Error: Failed to connect to ${url}\n\n` +
+        `Possible causes:\n` +
+        `1. Backend server is not running on ${this.baseURL}\n` +
+        `2. CORS not configured (backend must allow requests from ${typeof window !== 'undefined' ? window.location.origin : 'your frontend'})\n` +
+        `3. Firewall blocking connection (check Linode firewall settings)\n` +
+        `4. Wrong URL configured (current: ${this.baseURL})\n\n` +
+        `Environment variable: ${process.env.NEXT_PUBLIC_API_BASE_URL || "NOT SET"}\n` +
+        `Test URL: ${this.baseURL}/health`
+      )
+    }
 
     const contentType = response.headers.get("content-type") ?? ""
     if (response.status === 204 || response.status === 205) {
@@ -73,12 +108,12 @@ export class ApiClient {
     const text = await response.text()
     console.log(`[API Client] ${endpoint} - Raw text response (first 500 chars):`, text.slice(0, 500))
     
-    // Check if response is HTML (ngrok error, 404 page, etc.)
+    // Check if response is HTML (404 page, server error page, etc.)
     if (text.trim().toLowerCase().startsWith("<!doctype html") || text.includes("<html")) {
       console.error(`[API Client] ${endpoint} - Received HTML response instead of JSON!`)
       console.error(`[API Client] ${endpoint} - Full URL was: ${url}`)
-      console.error(`[API Client] ${endpoint} - This usually means: 1) Endpoint doesn't exist (404), 2) ngrok tunnel is down, or 3) Server error`)
-      throw new Error(`API returned HTML error page for ${endpoint} at ${url}. Check if endpoint exists and ngrok tunnel is active.`)
+      console.error(`[API Client] ${endpoint} - This usually means: 1) Endpoint doesn't exist (404), 2) Backend server is down, or 3) Server error`)
+      throw new Error(`API returned HTML error page for ${endpoint} at ${url}. Check if endpoint exists and backend server is running.`)
     }
 
     try {

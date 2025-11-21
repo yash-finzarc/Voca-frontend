@@ -132,30 +132,63 @@ export default function SystemPromptPage() {
     async (preserveSelection: boolean = true) => {
       setIsLoading(true)
       setIsLoadingPrompts(true)
+      setError(null) // Clear previous errors
       try {
         let response: unknown
         let promptList: PromptRecord[] = []
+        let listError: unknown = null
+        let activeError: unknown = null
 
         // Try to get list of prompts first
         try {
+          console.log("[loadPrompts] Attempting to fetch prompt list...", { organizationId: organizationId || "none" })
           response = await systemPromptApi.list(organizationId || undefined)
-          console.log("[loadPrompts] List response:", response)
+          console.log("[loadPrompts] List response received:", response)
+          console.log("[loadPrompts] Response type:", typeof response)
+          console.log("[loadPrompts] Response is array?", Array.isArray(response))
+          
           promptList = extractPromptList(response)
           console.log("[loadPrompts] Extracted prompt list:", promptList)
-        } catch (listError) {
+          console.log("[loadPrompts] Prompt list length:", promptList.length)
+        } catch (listErr) {
+          listError = listErr
+          const listErrMessage = listErr instanceof Error ? listErr.message : String(listErr)
+          console.warn("[loadPrompts] List endpoint failed:", listErrMessage)
+          console.warn("[loadPrompts] List error details:", listErr)
+          
           // If list endpoint doesn't exist (405), try getting active prompt instead
-          console.log("[loadPrompts] List endpoint not available, trying getActive:", listError)
+          if (listErrMessage.includes("405") || listErrMessage.includes("Method Not Allowed")) {
+            console.log("[loadPrompts] List endpoint not available (405), trying getActive as fallback")
+          } else {
+            // For other errors (network, 404, 500, etc.), still try getActive
+            console.log("[loadPrompts] List endpoint error, trying getActive as fallback:", listErrMessage)
+          }
+          
           try {
+            console.log("[loadPrompts] Attempting to fetch active prompt...", { organizationId: organizationId || "none" })
             response = await systemPromptApi.getActive(organizationId || undefined)
-            console.log("[loadPrompts] getActive response:", response)
+            console.log("[loadPrompts] getActive response received:", response)
+            console.log("[loadPrompts] getActive response type:", typeof response)
             // extractPromptList now handles single objects too
             promptList = extractPromptList(response)
             console.log("[loadPrompts] Extracted prompt list from getActive:", promptList)
-          } catch (activeError) {
-            // If both fail, just continue with empty list
-            console.warn("[loadPrompts] Could not load prompts:", activeError)
+            console.log("[loadPrompts] Prompt list length after getActive:", promptList.length)
+          } catch (activeErr) {
+            activeError = activeErr
+            const activeErrMessage = activeErr instanceof Error ? activeErr.message : String(activeErr)
+            console.error("[loadPrompts] Both list and getActive failed:")
+            console.error("[loadPrompts]   List error:", listErrMessage)
+            console.error("[loadPrompts]   Active error:", activeErrMessage)
             promptList = []
-            // Don't set error state - allow user to create new prompts
+            
+            // Show a helpful error message
+            if (activeErrMessage.includes("Network Error") || activeErrMessage.includes("Failed to fetch")) {
+              setError(`Failed to connect to backend. Check if the backend server is running and accessible. Error: ${activeErrMessage}`)
+            } else if (activeErrMessage.includes("404")) {
+              setError(`System prompt endpoint not found. The backend may not have the /api/system-prompt endpoint configured.`)
+            } else {
+              setError(`Failed to load system prompts. List endpoint: ${listErrMessage || "failed"}. Active endpoint: ${activeErrMessage || "failed"}`)
+            }
           }
         }
 
@@ -167,6 +200,11 @@ export default function SystemPromptPage() {
           setOriginalPrompt("")
           setWelcomeMessage("")
           setOriginalWelcomeMessage("")
+          
+          // Only show "no prompts" message if there was no error (user can create new)
+          if (!listError && !activeError) {
+            console.log("[loadPrompts] No prompts found, but no errors occurred")
+          }
           setIsLoading(false)
           setIsLoadingPrompts(false)
           return
@@ -175,6 +213,8 @@ export default function SystemPromptPage() {
         if (preserveSelection && selectedPromptId) {
           const stillExists = promptList.some((promptRecord) => promptRecord.id === selectedPromptId)
           if (stillExists) {
+            setIsLoading(false)
+            setIsLoadingPrompts(false)
             return
           }
         }
@@ -189,12 +229,12 @@ export default function SystemPromptPage() {
       } catch (err) {
         // Only set error for unexpected errors (not 405 from missing /list endpoint)
         const errorMessage = err instanceof Error ? err.message : String(err)
+        console.error("[loadPrompts] Unexpected error:", err)
         // Check if it's a 405 error (method not allowed) - this is expected if /list doesn't exist
         if (errorMessage.includes("405") || errorMessage.includes("Method Not Allowed")) {
           console.log("[loadPrompts] List endpoint not available (expected if backend doesn't support it)")
           // Don't set error - we already tried getActive as fallback
         } else {
-          console.error("Failed to load prompts:", err)
           setError(`Failed to load system prompts: ${errorMessage}`)
         }
       } finally {
@@ -477,6 +517,24 @@ export default function SystemPromptPage() {
           <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-blue-900 text-xs">
             <strong>Info:</strong> No organization ID set - prompts will be saved as default prompts. 
             To use multi-tenant features, set <code className="bg-blue-100 px-1 rounded">NEXT_PUBLIC_DEFAULT_ORGANIZATION_ID</code> in your environment variables.
+          </div>
+        )}
+
+        {process.env.NODE_ENV === "development" && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900 text-xs">
+            <strong>API Debug Info:</strong>
+            <div className="mt-1 space-y-1">
+              <div>Backend URL: <code className="bg-amber-100 px-1 rounded">{process.env.NEXT_PUBLIC_API_BASE_URL || "NOT CONFIGURED"}</code></div>
+              <div>Expected endpoints:
+                <ul className="list-disc list-inside ml-2 mt-1">
+                  <li><code>/api/system-prompt/list</code> or</li>
+                  <li><code>/api/system-prompt</code></li>
+                </ul>
+              </div>
+              <div className="mt-2 text-amber-800">
+                <strong>Note:</strong> If you see "NOT CONFIGURED", restart your Next.js dev server after updating .env.local
+              </div>
+            </div>
           </div>
         )}
 

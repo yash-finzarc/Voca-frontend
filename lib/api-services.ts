@@ -30,12 +30,14 @@ export const twilioApi = {
   getCallStatusSummary: (limit: number = 15) => apiClient.get(`/api/twilio/call-status/summary?limit=${limit}`),
 }
 
-export const ngrokApi = {
-  start: () => apiClient.post("/api/ngrok/start"),
-  stop: () => apiClient.post("/api/ngrok/stop"),
-  getStatus: () => apiClient.get("/api/ngrok/status"),
-  setUrl: (url: string) => apiClient.post("/api/ngrok/set-url", { url }),
-}
+// ngrok API removed - using Linode server instead
+// If you need ngrok functionality, you can re-add these endpoints
+// export const ngrokApi = {
+//   start: () => apiClient.post("/api/ngrok/start"),
+//   stop: () => apiClient.post("/api/ngrok/stop"),
+//   getStatus: () => apiClient.get("/api/ngrok/status"),
+//   setUrl: (url: string) => apiClient.post("/api/ngrok/set-url", { url }),
+// }
 
 export const logsApi = {
   getLogs: (limit: number = 100) => apiClient.get(`/api/logs?limit=${limit}`),

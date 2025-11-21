@@ -306,12 +306,12 @@ export default function TwilioCallsPage() {
       if (typeof response === "string") {
         console.log("[Call Status] Response is a string, checking if it's HTML...")
         
-        // Check if response is HTML (ngrok error page, 404, etc.)
+        // Check if response is HTML (404 page, server error page, etc.)
         if (response.trim().toLowerCase().startsWith("<!doctype html") || response.includes("<html")) {
-          console.error("[Call Status] Received HTML response (likely ngrok error or 404):", response.slice(0, 500))
+          console.error("[Call Status] Received HTML response (likely server error or 404):", response.slice(0, 500))
           addLog(`❌ Backend returned HTML instead of JSON. Check if endpoint exists: /api/twilio/call-status/summary`)
-          addLog(`❌ This usually means: 1) ngrok tunnel is down, 2) endpoint doesn't exist, or 3) wrong URL`)
-          throw new Error("Backend returned HTML error page. Check ngrok tunnel and endpoint URL.")
+          addLog(`❌ This usually means: 1) Backend server is down, 2) endpoint doesn't exist, or 3) wrong URL`)
+          throw new Error("Backend returned HTML error page. Check backend server and endpoint URL.")
         }
         
         addLog(`⚠️ Received string response: ${response.slice(0, 200)}`)
@@ -573,7 +573,7 @@ export default function TwilioCallsPage() {
         console.error("[Connection Test] Health check failed:", error)
         addLog(`❌ Backend connection failed: ${String(error)}`)
         addLog(`⚠️ All API calls will fail until connection is restored.`)
-        addLog(`💡 Check: 1) Is backend running? 2) Is ngrok tunnel active? 3) Is API URL correct in .env.local?`)
+        addLog(`💡 Check: 1) Is backend running on Linode? 2) Is API URL correct in .env.local? 3) Check firewall/network settings`)
         // Don't continue with other API calls if health check fails
         return
       }
