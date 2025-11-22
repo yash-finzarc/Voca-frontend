@@ -182,3 +182,5 @@ curl http://172.105.50.83:8000/health
 3. Confirm backend is accessible: `curl http://172.105.50.83:8000/health`
 4. Check if CORS is configured on backend
 
+
+

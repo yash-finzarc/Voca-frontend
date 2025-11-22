@@ -22,8 +22,21 @@ export class ApiClient {
   }
 
   async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-    const url = `${this.baseURL}${endpoint}`
+    // Check for mixed content (HTTPS page trying to access HTTP endpoint)
+    const isHTTPS = typeof window !== 'undefined' && window.location.protocol === 'https:'
+    const isHTTPBackend = this.baseURL.startsWith('http://')
+    const useProxy = isHTTPS && isHTTPBackend
+
+    // Use proxy route when mixed content is detected (HTTPS frontend -> HTTP backend)
+    const url = useProxy 
+      ? `/api/proxy${endpoint}` 
+      : `${this.baseURL}${endpoint}`
+    
     console.log(`[API Client] Making request to: ${url}`)
+    if (useProxy) {
+      console.log(`[API Client] Using proxy route due to mixed content (HTTPS -> HTTP)`)
+      console.log(`[API Client] Original backend URL: ${this.baseURL}${endpoint}`)
+    }
     console.log(`[API Client] Base URL: ${this.baseURL}`)
     console.log(`[API Client] Environment variable: ${process.env.NEXT_PUBLIC_API_BASE_URL || "NOT SET"}`)
 
@@ -45,18 +58,19 @@ export class ApiClient {
       // Provide detailed diagnostic information
       const diagnostics = [
         `❌ Network Error: Failed to fetch from ${url}`,
+        ``,
         `📋 Diagnostics:`,
-        `   1. Check if backend is running on: ${this.baseURL}`,
-        `   2. Check if ${this.baseURL} is accessible from your browser`,
-        `   3. Verify CORS is configured on backend to allow: ${typeof window !== 'undefined' ? window.location.origin : 'your frontend URL'}`,
-        `   4. Check Linode firewall settings - port must be open`,
-        `   5. If using HTTP (not HTTPS), verify the backend URL is correct`,
-        `   6. Environment variable NEXT_PUBLIC_API_BASE_URL: ${process.env.NEXT_PUBLIC_API_BASE_URL || "NOT CONFIGURED"}`,
+        `   1. Check if backend is running on: ${this.baseURL}` +
+        `\n   2. Check if ${this.baseURL} is accessible from your browser` +
+        `\n   3. Verify CORS is configured on backend to allow: ${typeof window !== 'undefined' ? window.location.origin : 'your frontend URL'}` +
+        `\n   4. Check Linode firewall settings - port must be open` +
+        `\n   5. Environment variable NEXT_PUBLIC_API_BASE_URL: ${process.env.NEXT_PUBLIC_API_BASE_URL || "NOT CONFIGURED"}`,
         ``,
         `💡 Try:`,
         `   - Open ${this.baseURL}/health in your browser to test connectivity`,
         `   - Check backend logs on Linode server`,
         `   - Verify firewall allows connections on the backend port`,
+        useProxy ? `   - Note: Using proxy route due to mixed content (HTTPS -> HTTP)` : '',
       ]
       
       console.error(diagnostics.join('\n'))
@@ -69,7 +83,8 @@ export class ApiClient {
         `3. Firewall blocking connection (check Linode firewall settings)\n` +
         `4. Wrong URL configured (current: ${this.baseURL})\n\n` +
         `Environment variable: ${process.env.NEXT_PUBLIC_API_BASE_URL || "NOT SET"}\n` +
-        `Test URL: ${this.baseURL}/health`
+        `Test URL: ${this.baseURL}/health` +
+        (useProxy ? `\n\nNote: Using Next.js API proxy to avoid mixed content issues.` : '')
       )
     }
 

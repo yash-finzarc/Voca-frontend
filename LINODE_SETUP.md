@@ -81,3 +81,5 @@ app.add_middleware(
 - **CORS Errors**: Update backend CORS settings to include your frontend URL
 - **WebSocket Errors**: Ensure WebSocket endpoint is available and firewall allows connections
 
+
+
