@@ -3,32 +3,78 @@ import { NextRequest, NextResponse } from 'next/server'
 // Get backend URL from environment variable
 const BACKEND_URL = process.env.NEXT_PUBLIC_API_BASE_URL || process.env.BACKEND_URL || 'http://localhost:8000'
 
+// Helper to resolve params (handles both Promise and direct params)
+async function resolveParams(
+  params: Promise<{ path: string[] }> | { path: string[] }
+): Promise<{ path: string[] }> {
+  if (params instanceof Promise) {
+    return await params
+  }
+  return params
+}
+
 export async function GET(
   request: NextRequest,
-  { params }: { params: { path: string[] } }
+  context: { params: Promise<{ path: string[] }> | { path: string[] } }
 ) {
-  return handleRequest(request, params, 'GET')
+  try {
+    const resolvedParams = await resolveParams(context.params)
+    return handleRequest(request, resolvedParams, 'GET')
+  } catch (error) {
+    console.error('[API Proxy GET] Error resolving params:', error)
+    return NextResponse.json(
+      { error: 'Failed to process request', message: String(error) },
+      { status: 500 }
+    )
+  }
 }
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: { path: string[] } }
+  context: { params: Promise<{ path: string[] }> | { path: string[] } }
 ) {
-  return handleRequest(request, params, 'POST')
+  try {
+    const resolvedParams = await resolveParams(context.params)
+    return handleRequest(request, resolvedParams, 'POST')
+  } catch (error) {
+    console.error('[API Proxy POST] Error resolving params:', error)
+    return NextResponse.json(
+      { error: 'Failed to process request', message: String(error) },
+      { status: 500 }
+    )
+  }
 }
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { path: string[] } }
+  context: { params: Promise<{ path: string[] }> | { path: string[] } }
 ) {
-  return handleRequest(request, params, 'PUT')
+  try {
+    const resolvedParams = await resolveParams(context.params)
+    return handleRequest(request, resolvedParams, 'PUT')
+  } catch (error) {
+    console.error('[API Proxy PUT] Error resolving params:', error)
+    return NextResponse.json(
+      { error: 'Failed to process request', message: String(error) },
+      { status: 500 }
+    )
+  }
 }
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { path: string[] } }
+  context: { params: Promise<{ path: string[] }> | { path: string[] } }
 ) {
-  return handleRequest(request, params, 'DELETE')
+  try {
+    const resolvedParams = await resolveParams(context.params)
+    return handleRequest(request, resolvedParams, 'DELETE')
+  } catch (error) {
+    console.error('[API Proxy DELETE] Error resolving params:', error)
+    return NextResponse.json(
+      { error: 'Failed to process request', message: String(error) },
+      { status: 500 }
+    )
+  }
 }
 
 export async function OPTIONS() {
@@ -48,12 +94,42 @@ async function handleRequest(
   method: string
 ) {
   try {
-    // Reconstruct the backend path
-    const path = params.path.join('/')
+    // Log params for debugging
+    console.log('[API Proxy] Received params:', JSON.stringify(params))
+    console.log('[API Proxy] Request URL:', request.url)
+    
+    // Extract path from params or fallback to URL parsing
+    let path: string = ''
+    
+    if (params && params.path && Array.isArray(params.path) && params.path.length > 0) {
+      // Use params if available
+      path = params.path.join('/')
+      console.log('[API Proxy] Using params.path:', path)
+    } else {
+      // Fallback: extract path from URL
+      // URL format: https://domain.com/api/proxy/api/system-prompt
+      // We need to extract everything after /api/proxy/
+      const url = new URL(request.url)
+      const pathname = url.pathname
+      const proxyPrefix = '/api/proxy'
+      
+      if (pathname.startsWith(proxyPrefix)) {
+        path = pathname.slice(proxyPrefix.length + 1) // +1 to remove leading /
+        console.log('[API Proxy] Extracted path from URL:', path)
+      } else {
+        console.error('[API Proxy] Could not extract path from URL:', pathname)
+        return NextResponse.json(
+          { error: 'Invalid request path', details: 'Could not determine backend path' },
+          { status: 400 }
+        )
+      }
+    }
     const searchParams = request.nextUrl.searchParams.toString()
     // Ensure proper URL construction (BACKEND_URL/path)
     const baseUrl = BACKEND_URL.replace(/\/$/, '') // Remove trailing slash
-    const backendUrl = `${baseUrl}/${path}${searchParams ? `?${searchParams}` : ''}`
+    const backendUrl = path 
+      ? `${baseUrl}/${path}${searchParams ? `?${searchParams}` : ''}`
+      : `${baseUrl}${searchParams ? `?${searchParams}` : ''}`
 
     console.log(`[API Proxy] ${method} ${backendUrl}`)
 
